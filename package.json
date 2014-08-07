@@ -1,0 +1,39 @@
+{
+    "name": "async-fonfig",
+    "description": "This module provides a simple asynchronous API for loading environment-specific config files.",
+    "main": "lib/index.js",
+    "scripts": {
+        "test": "node_modules/.bin/mocha --ui bdd --reporter spec ./test && node_modules/.bin/jshint lib/ middleware/"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/patrick-steele-idem/async-fonfig.git"
+    },
+    "keywords": [
+        "router",
+        "express",
+        "metadata",
+        "server",
+        "http"
+    ],
+    "author": "Patrick Steele-Idem <pnidem@gmail.com>",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/patrick-steele-idem/async-fonfig/issues"
+    },
+    "homepage": "https://github.com/patrick-steele-idem/async-fonfig",
+    "dependencies": {
+        "jsonminify": "^0.2.3",
+        "raptor-async": "^0.2.8-beta",
+        "resolve-from": "^1.0.0",
+        "shortstop": "^1.0.1"
+    },
+    "devDependencies": {
+        "chai": "^1.9.1",
+        "express": "^4.7.2",
+        "jshint": "^2.5.2",
+        "mocha": "^1.21.3",
+        "request": "^2.39.0"
+    },
+    "version": "1.0.2-beta"
+}
