@@ -56,17 +56,17 @@ asyncConfig.load('config/config.json', function(err, config) {
 
 When loading a configuration file, the following is the default order that JSON files are searched for and loaded:
 
-1. path/{name}.json
-2. path/{name}-{environment}.json
-3. path/{name}-local.json
-4. `NODE_CONFIG` environment variable 
+1. `path/{name}.json`
+2. `path/{name}-{environment}.json`
+3. `path/{name}-local.json`
+4. `NODE_CONFIG='{...}'` environment variable 
 5. `--NODE_CONFIG='{...}'` command-line overrides
 
 For example, given the following input of `"config/config.json"` and a value of `production`, the configuration files will be loaded and merged in the following order:
 
-1. path/config.json
-2. path/config-production.json
-3. path/config-local.json
+1. `path/config.json`
+2. `path/config-production.json`
+3. `path/config-local.json`
 4. `NODE_CONFIG` environment variable 
 5. `--NODE_CONFIG='{...}'` command-line overrides
 
@@ -76,20 +76,20 @@ The load order can be modified using any of the following approaches:
 asyncConfig.load(
     'config/config.json',
     {
-        configs: function(configs) {
+        sources: function(sources) {
             // Add defaults to the beginning:
-            configs.unshift('config/custom-detaults.json');
+            sources.unshift('config/custom-detaults.json');
 
             // Add overrides to the end:
-            configs.push('config/custom-overrides.json');
+            sources.push('config/custom-overrides.json');
 
             // You can also push an object instead of a path to a configuration file:
-            configs.push({
+            sources.push({
                 foo: 'bar'
             });
 
             // You can also push a function that will asynchronously load additional config data:
-            configs.push(function(callback) {
+            sources.push(function(callback) {
                 callback(null, {hello: 'world'});
             });
         },
@@ -103,7 +103,7 @@ asyncConfig.load(
 
 # Merging Configurations
 
-A deep merge of objects is used to merge configuration objects. Properties in configuration objects loaded and merged later will overwrite properties of configuration objects loaded earlier.
+A deep merge of objects is used to merge configuration objects. Properties in configuration objects loaded and merged later will overwrite properties of configuration objects loaded earlier. Only properties of complex objects that are _not_ `Array` instances are merged.
 
 # Environment Variables
 
@@ -269,7 +269,7 @@ The path should be a file system path to a configuration file. If the path does 
 The `options` argument supports the following properties:
 
 - __environment:__ The value of the environment variable (defaults to `process.env.NODE_ENV` or `development`)
-- __configs:__ A function that can be used to modify the default load order
+- __sources:__ A function that can be used to modify the default load order
 - __defaults:__ An array of objects/paths that will be prepended to the load order
 - __overrides:__ An array of objects/paths that will be appended to the load order
 - __protocols:__ An object where each name is the protocol name and the value is a resolver `function` (see the [shortstop](https://github.com/krakenjs/shortstop) docs for more details)

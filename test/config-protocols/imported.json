@@ -1,0 +1,5 @@
+{
+    "env": "default",
+    "upperCase": "upperCase:hello world",
+    "upperCaseAsync": "upperCaseAsync:hello world"
+}
