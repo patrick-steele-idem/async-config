@@ -3,7 +3,7 @@ async-config
 
 This module provides a simple asynchronous API for loading environment-specific config files and configuration data from other sources. This module utilizes the [shortstop](https://github.com/krakenjs/shortstop) module to provide support for resolving values inside the configuration files based on user-provided "protocol handlers".
 
-This module has extensive tests, documented, stable and production-ready.
+This module has extensive tests and is documented, stable and production-ready.
 
 # Table of Contents
 
@@ -82,21 +82,21 @@ require('async-config').load('config/config.json', function(err, config) {
 
 # Load Order
 
-When loading a configuration file, the following is the default order that JSON files are searched for and loaded:
+When loading a configuration file, the following is the default order that configuration data is loaded:
 
 1. `path/{name}.json`
 2. `path/{name}-{environment}.json`
 3. `path/{name}-local.json`
 4. `NODE_CONFIG='{...}'` environment variable 
-5. `--NODE_CONFIG='{...}'` command-line overrides
+5. `--NODE_CONFIG='{...}'` command-line arguments
 
-For example, given the following input of `"config/config.json"` and a value of `production`, the configuration files will be loaded and merged in the following order:
+For example, given the following input of `"config/config.json"` and a value of `production`, the configuration data will be loaded and merged in the following order:
 
 1. `path/config.json`
 2. `path/config-production.json`
 3. `path/config-local.json`
 4. `NODE_CONFIG` environment variable 
-5. `--NODE_CONFIG='{...}'` command-line overrides
+5. `--NODE_CONFIG='{...}'` command-line arguments
 
 The load order can be modified using any of the following approaches:
 
@@ -396,4 +396,3 @@ npm test
 ## License
 
 ISC
-
