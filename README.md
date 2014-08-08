@@ -1,7 +1,36 @@
 async-config
 =============
 
-This module provides a simple asynchronous API for loading environment-specific config files. This module utilizes the [shortstop](https://github.com/krakenjs/shortstop) module to provide support for resolving values inside the configuration files based on user-provided "protocol handlers".
+This module provides a simple asynchronous API for loading environment-specific config files and configuration data from other sources. This module utilizes the [shortstop](https://github.com/krakenjs/shortstop) module to provide support for resolving values inside the configuration files based on user-provided "protocol handlers".
+
+This module has extensive tests, documented, stable and production-ready.
+
+# Table of Contents
+
+- [async-config](#async-config)
+- [Installation](#installation)
+- [Overview](#overview)
+- [Example](#example)
+- [Load Order](#load-order)
+- [Merging Configurations](#merging-configurations)
+- [Environment Variables](#environment-variables)
+    - [NODE_ENV](#node_env)
+    - [NODE_CONFIG](#node_config)
+- [Protocol Handlers](#protocol-handlers)
+    - [import](#import)
+    - [path](#path)
+    - [require](#require)
+- [Command Line Arguments](#command-line-arguments)
+- [App/Server Startup](#appserver-startup)
+- [API](#api)
+    - [load(path[, options, callback]) : AsyncConfigHandle](#loadpath-options-callback--asyncconfighandle)
+    - [AsyncConfigHandle](#asyncconfighandle)
+        - [done(callback)](#donecallback)
+- [Notes](#notes)
+- [TODO](#todo)
+- [Maintainers](#maintainers)
+- [Contribute](#contribute)
+    - [License](#license)
 
 # Installation
 
@@ -41,8 +70,7 @@ Each configuration file should contain valid JSON data such as the following:
 The following JavaScript code can be used to load the JSON configuration files and flatten them into a single configuration object:
 
 ```javascript
-var asyncConfig = require('async-config');
-asyncConfig.load('config/config.json', function(err, config) {
+require('async-config').load('config/config.json', function(err, config) {
     // The config is just a JavaScript object:
     var foo = config.foo; 
     var hello = config.complex.hello;
@@ -73,7 +101,7 @@ For example, given the following input of `"config/config.json"` and a value of 
 The load order can be modified using any of the following approaches:
 
 ```javascript
-asyncConfig.load(
+require('async-config').load(
     'config/config.json',
     {
         sources: function(sources) {
@@ -134,10 +162,9 @@ This module supports using protocols inside configuration files. For example, gi
 Protocol handlers can be registered as shown in the following sample code:
 
 ```javascript
-var asyncConfig = require('async-config');
 var configDir  = require('path').resolve(__dirname, 'config');
 
-asyncConfig.load(
+require('async-config').load(
     require('path').join(configDir, 'config.json'),
     {
         protocols: {
@@ -195,18 +222,66 @@ For example:
 }
 ```
 
+# Command Line Arguments
+
+By default, this module will merge configuration data from the `--NODE_CONFIG='{...}'` argument, but you can also easily merge in your own parsed command line arguments. For example, this module can be combined with the [raptor-args](https://github.com/raptorjs3/raptor-args) module as shown in the following sample code:
+
+```javascript
+var commandLineArgs = require('raptor-args').createParser({
+        '--foo -f': 'boolean',
+        '--bar -b': 'string'
+    })
+    .parse();
+
+require('async-config').load(
+    'config/config.json',
+    {
+        overrides: [commandLineArgs]
+    },
+    function(err, config) {
+        // Do something with the loaded config
+    });
+```
+
+Therefore, if your app is invoked using `node myapp.js --foo -b hello`, then the final configuration would be:
+
+```javascript
+{
+    "foo": true,
+    "bar": "hello",
+    ... // Other properties from the config.json files
+}
+```
+
 # App/Server Startup
 
-It is common practice to load the configuration at startup and to delay listening on an HTTP port until the configuration is fully loaded. After a configuration has been loaded, the rest of the application should be able access the configuration synchronously. To support this pattern it is recommended to create a `config.js` module in your application as shown below:
+It is common practice to load the configuration at startup and to delay listening on an HTTP port until the configuration is fully loaded. After the configuration has been loaded, the rest of the application should be able access the configuration synchronously. To support this pattern it is recommended to create a `config.js` module in your application as shown below:
 
 __config.js:__
 
 ```javascript
-var asyncConfig = require('async-config');
 var loadedConfig = null;
 
+function configureApp(config, callback) {
+    // Apply the configuration to the application...
+    
+    // Make sure to invoke the callback when the application is fully configured
+    callback();
+}
+
 // Initiate the loading of the config
-var configHandle = asyncConfig.load('config/config.json');
+var configHandle = require('async-config').load(
+    'config/config.json',
+    {
+        finalize: configureApp
+    },
+    function(err, config) {
+        if (err) {
+            throw err;
+        }
+        
+        loadedConfig = config;
+    });
 
 /**
  * Synchronous API to return the loaded configuration:
@@ -224,7 +299,7 @@ exports.get = function() {
  * If the configuration has already been fully loaded then the listener
  * will be invoked immediately.
  */
-exports.onLoad = function(callback) {
+exports.onConfigured = function(callback) {
     configHandle.done(callback);
 }
 ```
@@ -236,7 +311,7 @@ var express = require('express');
 var config = require('./config');
 
 // Asynchronously load environment-specific configuration data before starting the server
-config.onLoad(function(err, config) {
+config.onConfigured(function(err, config) {
     if (err) {
         throw err;
     }
@@ -251,6 +326,8 @@ config.onLoad(function(err, config) {
     });
 });
 ```
+
+For a working sample server application that utilizes this module, please see the source code for the [raptor-samples/weather](https://github.com/raptorjs3/raptor-samples/tree/master/weather) app.
 
 # API
 
@@ -268,11 +345,18 @@ The path should be a file system path to a configuration file. If the path does 
 
 The `options` argument supports the following properties:
 
-- __environment:__ The value of the environment variable (defaults to `process.env.NODE_ENV` or `development`)
-- __sources:__ A function that can be used to modify the default load order
-- __defaults:__ An array of objects/paths that will be prepended to the load order
-- __overrides:__ An array of objects/paths that will be appended to the load order
-- __protocols:__ An object where each name is the protocol name and the value is a resolver `function` (see the [shortstop](https://github.com/krakenjs/shortstop) docs for more details)
+- __defaults:__ An array of sources that will be prepended to the load order. Each source can be either a `String` file path, an async `Function` or an `Object`.
+- __environment:__ The value of the environment variable (defaults to `process.env.NODE_ENV` or `development`).
+- __excludes:__ An `Array` of sources to exclude. Possible values are the following:
+    - `"command-line"` - ignore the `--NODE_CONFIG` command line argument
+    - `"env"` - ignore the `NODE_CONFIG` environment variable
+    - `"env-file"` - ignore `path/{name}-{environment}.json`
+    - `"local-file"` - ignore `path/{name}-local.json`
+- __finalize:__ An asynchronous `Function` with signature `function (config, callback)` that can be used to post-process the final configuration object and possibly return an entirely new configuration object.
+- __helpersEnabled:__ If set to `false` then no helpers will be added to the configuration object (currently the `get()` method is the only helper added to the final configuration object). The default value is `true`.
+- __overrides:__ An array of sources that will be appended to the load order. Each source can be either a `String` file path, an async `Function` or an `Object`.
+- __protocols:__ An object where each name is the protocol name and the value is a resolver `function` (see the [shortstop](https://github.com/krakenjs/shortstop) docs for more details).
+- __sources:__ A function that can be used to modify the default load order.
 
 ## AsyncConfigHandle
 
