@@ -30,7 +30,7 @@ This module has extensive tests and is documented, stable and production-ready.
 - [TODO](#todo)
 - [Maintainers](#maintainers)
 - [Contribute](#contribute)
-    - [License](#license)
+- [License](#license)
 
 # Installation
 
@@ -393,6 +393,6 @@ npm install
 npm test
 ```
 
-## License
+# License
 
 ISC
