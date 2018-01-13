@@ -1,12 +1,14 @@
-var nodePath = require('path');
-var async = require('async');
-var fs = require('fs');
-var DataHolder = require('raptor-async/DataHolder');
-var extend = require('raptor-util/extend');
-var shortstop = require('shortstop');
-var jsonminify = require('jsonminify');
-var resolveFrom = require('resolve-from');
-var shortstopHandlers = require('shortstop-handlers');
+const pify = require('pify');
+const nodePath = require('path');
+const fs = require('fs');
+const shortstop = require('shortstop');
+const jsonminify = require('jsonminify');
+const resolveFrom = require('resolve-from');
+const shortstopHandlers = require('shortstop-handlers');
+
+const readFileAsync = pify(fs.readFile);
+const base64ProtocolAsync = pify(shortstopHandlers.base64());
+const envProtocolAsync = pify(shortstopHandlers.env());
 
 var commandLineNodeConfig;
 var envNodeConfig;
@@ -168,75 +170,50 @@ function buildSources(path, options) {
     return sources;
 }
 
-function loadFileSource(path, options, callback) {
-    fs.readFile(path, {encoding: 'utf8'}, function(err, json) {
-        if (err) {
-            if (err.code === 'ENOENT') {
-                // Ignore missing files
-                return callback();
-            }
-            return callback(err);
-        }
-
-        var config = parseJSON(json, 'Failed to load config at path "' + path + '". Unable to parse JSON');
-
-        handleProtocols(config, path, options, function(err, config) {
-            if (err) {
-                return callback(err);
-            }
-
-            callback(null, config);
-        });
-    });
+async function loadFileSource(path, options) {
+    try {
+      const json = await readFileAsync(path, {encoding: 'utf8'});
+      const config = parseJSON(json, 'Failed to load config at path "' + path + '". Unable to parse JSON');
+      return handleProtocols(config, path, options);
+    } catch (err) {
+        // Ignore missing files
+        if (err.code !== 'ENOENT') throw err;
+    }
 }
 
 /**
  * Asynchronously load all of the configuration objects from the various sources.
  */
-function loadSources(sources, options, callback) {
+async function loadSources(sources, options) {
+    const mergedConfig = {};
 
-    var mergedConfig = {};
+    function handleSourceLoad (sourceConfig) {
+        if (sourceConfig) merge(sourceConfig, mergedConfig);
+    }
 
-    var tasks = sources.map(function(source, i) {
-        return function (callback) {
+    for (const source of sources) {
+        let sourceConfig;
 
-            function handleSourceLoad(err, sourceConfig) {
-                if (err) {
-                    return callback(err);
-                }
-
-                // console.log('MERGE: SOURCE:', source, '\n', sourceConfig, '\nTARGET:\n', mergedConfig, '\n----------\n\n');
-
-                if (sourceConfig) {
-                    merge(sourceConfig, mergedConfig);
-                }
-
-                callback();
-            }
-
-            if (source == null) {
-                callback(); // No-op... skip this source
-            } else if (typeof source === 'string') {
-                loadFileSource(source, options, handleSourceLoad); // Load a source from a JSON file
-            } else if (Array.isArray(source)) {
-                loadSources(source, options, handleSourceLoad); // Load and merge all of the sources
-            } else if (typeof source === 'function') {
-                source(handleSourceLoad); // Invoke the function to asynchronously load the config object for this source
-            } else if (typeof source === 'object') {
-                handleSourceLoad(null, source); // Just merge the object
-            } else {
-                callback(new Error('Invalid configuration source: ' + source));
-            }
-        };
-    });
-
-    async.series(tasks, function (err) {
-        if (err) {
-            return callback(err);
+        if (source == null) {
+            // No-op... skip this source
+            continue;
+        } else if (typeof source === 'string') {
+            // Load a source from a JSON file
+            sourceConfig = await loadFileSource(source, options);
+        } else if (Array.isArray(source)) {
+            sourceConfig = await loadSources(source, options); // Load and merge all of the sources
+        } else if (typeof source === 'function') {
+            sourceConfig = await source(); // Invoke the function to asynchronously load the config object for this source
+        } else if (typeof source === 'object') {
+            sourceConfig = source; // Just merge the object
+        } else {
+            throw new Error('Invalid configuration source: ' + source);
         }
 
-        callback(null, mergedConfig);
-    });
+        handleSourceLoad(sourceConfig);
+    }
+
+    return mergedConfig;
 }
 
 function createRequireResolver(dirname) {
@@ -246,26 +223,39 @@ function createRequireResolver(dirname) {
     };
 }
 
-function handleProtocols(config, path, options, callback) {
-    var resolver = shortstop.create();
+function handleProtocols(config, path, options) {
+    return new Promise((resolve, reject) => {
+        var resolver = shortstop.create();
 
-    var protocols = options.protocols;
-    var hasProtocol = false;
-    if (protocols) {
-        Object.keys(protocols).forEach(function(protocol) {
-            var handler = protocols[protocol];
-            if (handler) {
-                hasProtocol = true;
-                resolver.use(protocol, handler);
-            }
-        });
-    }
+        var protocols = options.protocols;
+        var hasProtocol = false;
+        if (protocols) {
+            Object.keys(protocols).forEach(function(protocol) {
+                var handler = protocols[protocol];
+                if (handler) {
+                    hasProtocol = true;
+                    resolver.use(protocol, async (value, callback) => {
+                        const retVal = handler(value);
 
-    if (hasProtocol) {
-        resolver.resolve(config, callback);
-    } else {
-        callback(null, config);
-    }
+                        if (typeof retVal === 'object' && retVal.then) {
+                            retVal.then((promiseVal) => callback(null, promiseVal))
+                              .catch(callback);
+                        } else {
+                            callback(null, retVal);
+                        }
+                    });
+                }
+            });
+        }
+
+        if (hasProtocol) {
+            resolver.resolve(config, (err, res) => {
+              return err ? reject(err) : resolve(res);
+            });
+        } else {
+            resolve(config);
+        }
+    });
 }
 
 function addHelpers(config, options) {
@@ -298,29 +288,27 @@ function addHelpers(config, options) {
     return config;
 }
 
-function load(path, options, callback) {
-    if (typeof options === 'function') {
-        callback = options;
-        options = {};
-    }
-
+async function load(path, options) {
     if (options) {
         // Create a copy of the options since we will be modifying the options
-        extend({}, options);
+        Object.assign({}, options);
     } else {
         options = {};
     }
 
-    var dir = nodePath.dirname(path);
+    let dir = nodePath.dirname(path);
+
+    const fileProtocolAsync = pify(shortstopHandlers.file(dir))
+    const execProtocolHandler = pify(shortstopHandlers.exec(dir));
 
     // Build a default set of protocols
     var protocols = {
-        'path':  function(value) {
+        'path': function(value) {
             return nodePath.resolve(dir, value);
         },
-        'import': function(value, callback) {
+        'import': function(value) {
             var importPath = nodePath.resolve(dir, value);
-            var importOptions = extend({}, options);
+            var importOptions = Object.assign({}, options);
 
             // Keep the environment and protocols, but don't keep the sources
             delete importOptions.sources;
@@ -328,7 +316,7 @@ function load(path, options, callback) {
             delete importOptions.overrides;
             delete importOptions.finalize;
 
-            importOptions.excludes = extend({}, options.excludes);
+            importOptions.excludes = Object.assign({}, options.excludes);
 
             // Exclude the environment variables
             importOptions.excludes['env'] = true;
@@ -336,18 +324,18 @@ function load(path, options, callback) {
 
             importOptions.helpersEnabled = false; // Don't add helpers to imported configs
 
-            load(importPath, importOptions, callback);
+            return load(importPath, importOptions);
         },
-        'file':   shortstopHandlers.file(dir),
-        'base64': shortstopHandlers.base64(),
-        'env': shortstopHandlers.env(),
+        'file': fileProtocolAsync,
+        'base64': base64ProtocolAsync,
+        'env': envProtocolAsync,
         'require': createRequireResolver(dir),
-        'exec': shortstopHandlers.exec(dir)
+        'exec': execProtocolHandler
     };
 
     if (options.protocols) {
         // If the user provided any protocols then those will override the defaults
-        extend(protocols, options.protocols);
+        Object.assign(protocols, options.protocols);
     }
 
     // Store the protocols back in the options
@@ -372,43 +360,19 @@ function load(path, options, callback) {
     // Store the excludes back into the options
     options.excludes = excludes;
 
-    var dataHolder = new DataHolder();
+    const sources = buildSources(path, options);
+    let finalConfig = await loadSources(sources, options);
 
-    if (callback) {
-        dataHolder.done(callback);
+    if (options.finalize) {
+        const config = await options.finalize(finalConfig);
+
+        if (config) {
+            // If the finalize function provided a config object then use that
+            finalConfig = config;
+        }
     }
 
-    var sources = buildSources(path, options);
-    loadSources(sources, options, function(err, finalConfig) {
-        if (err) {
-            return dataHolder.reject(err);
-        }
-
-
-
-        if (options.finalize) {
-            options.finalize(finalConfig, function(err, config) {
-                if (err) {
-                    return dataHolder.reject(err);
-                }
-
-                if (config) {
-                    // If the finalize function provided a config object then use that
-                    finalConfig = config;
-                }
-
-                dataHolder.resolve(addHelpers(finalConfig, options));
-            });
-        } else {
-            dataHolder.resolve(addHelpers(finalConfig, options));
-        }
-    });
-
-    return {
-        done: function(callback) {
-            dataHolder.done(callback);
-        }
-    };
+    return addHelpers(finalConfig, options);
 }
 
 exports.load = load;
