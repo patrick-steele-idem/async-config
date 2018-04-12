@@ -23,9 +23,7 @@ This module has extensive tests and is documented, stable and production-ready.
 - [Command Line Arguments](#command-line-arguments)
 - [App/Server Startup](#appserver-startup)
 - [API](#api)
-    - [load(path[, options, callback]) : AsyncConfigHandle](#loadpath-options-callback--asyncconfighandle)
-    - [AsyncConfigHandle](#asyncconfighandle)
-        - [done(callback)](#donecallback)
+    - [load(path[, options]) : Promise](#loadpath-options--promise)
 - [Notes](#notes)
 - [TODO](#todo)
 - [Maintainers](#maintainers)
@@ -70,14 +68,16 @@ Each configuration file should contain valid JSON data such as the following:
 The following JavaScript code can be used to load the JSON configuration files and flatten them into a single configuration object:
 
 ```javascript
-require('async-config').load('config/config.json', function(err, config) {
-    // The config is just a JavaScript object:
-    var foo = config.foo; 
-    var hello = config.complex.hello;
+const asyncConfig = require('async-config');
 
-    // Use the get() method to safely access nested properties:
-    var missing = config.get('complex.invalid.hello'); 
-});
+const config = await asyncConfig.load('config/config.json');
+
+// The config is just a JavaScript object:
+const foo = config.foo;
+const hello = config.complex.hello;
+
+// Use the get() method to safely access nested properties:
+const missing = config.get('complex.invalid.hello');
 ```
 
 # Load Order
@@ -87,7 +87,7 @@ When loading a configuration file, the following is the default order that confi
 1. `path/{name}.json`
 2. `path/{name}-{environment}.json`
 3. `path/{name}-local.json`
-4. `NODE_CONFIG='{...}'` environment variable 
+4. `NODE_CONFIG='{...}'` environment variable
 5. `--NODE_CONFIG='{...}'` command-line arguments
 
 For example, given the following input of `"config/config.json"` and a value of `production`, the configuration data will be loaded and merged in the following order:
@@ -95,38 +95,32 @@ For example, given the following input of `"config/config.json"` and a value of 
 1. `path/config.json`
 2. `path/config-production.json`
 3. `path/config-local.json`
-4. `NODE_CONFIG` environment variable 
+4. `NODE_CONFIG` environment variable
 5. `--NODE_CONFIG='{...}'` command-line arguments
 
 The load order can be modified using any of the following approaches:
 
 ```javascript
-require('async-config').load(
-    'config/config.json',
-    {
-        sources: function(sources) {
-            // Add defaults to the beginning:
-            sources.unshift('config/custom-detaults.json');
+const asyncConfig = require('async-config');
+const config = await asyncConfig.load('config/config.json', {
+    sources (sources) {
+        // Add defaults to the beginning:
+        sources.unshift('config/custom-detaults.json')
 
-            // Add overrides to the end:
-            sources.push('config/custom-overrides.json');
+        // Add overrides to the end:
+        sources.push('config/custom-overrides.json')
 
-            // You can also push an object instead of a path to a configuration file:
-            sources.push({
-                foo: 'bar'
-            });
+        // You can also push an object instead of a path to a configuration file:
+        sources.push({ foo: 'bar' })
 
-            // You can also push a function that will asynchronously load additional config data:
-            sources.push(function(callback) {
-                callback(null, {hello: 'world'});
-            });
-        },
-        defaults: ['config/more-detaults.json'],
-        overrides: ['config/more-overrides.json']
+        // You can also push a function that will asynchronously load additional config data:
+        sources.push(function () {
+            return Promise.resolve({ hello: 'world' });
+        });
     },
-    function(err, config) {
-        ...
-    });
+    defaults: ['config/more-detaults.json'],
+    overrides: ['config/more-overrides.json']
+});
 ```
 
 # Merging Configurations
@@ -162,20 +156,19 @@ This module supports using protocols inside configuration files. For example, gi
 Protocol handlers can be registered as shown in the following sample code:
 
 ```javascript
-var configDir  = require('path').resolve(__dirname, 'config');
+const path = require('path');
+const asyncConfig = require('async-config');
 
-require('async-config').load(
-    require('path').join(configDir, 'config.json'),
-    {
-        protocols: {
-            path: function(path) {
-                return require('path').resolve(configDir, path);
-            }
+const configDir = path.resolve(__dirname, 'config');
+const configPath = path.join(configDir, 'config.json');
+
+const config = await asyncConfig.load(configPath, {
+    protocols: {
+        path (path) {
+            return path.resolve(configDir, path);
         }
-    },
-    function(err, config) {
-        ...
-    });
+    }
+});
 ```
 
 Since the `path` protocol handler is used, the final value of the `"outputDir"` directory will be resolved to the full system path relative to the directory containing the configuration file. For example:
@@ -190,7 +183,7 @@ By default, the following protocol handlers are registered:
 
 ## import
 
-Loads another configuration given by a path relative to the current directory. 
+Loads another configuration given by a path relative to the current directory.
 
 For example:
 
@@ -227,20 +220,18 @@ For example:
 By default, this module will merge configuration data from the `--NODE_CONFIG='{...}'` argument, but you can also easily merge in your own parsed command line arguments. For example, this module can be combined with the [raptor-args](https://github.com/raptorjs3/raptor-args) module as shown in the following sample code:
 
 ```javascript
-var commandLineArgs = require('raptor-args').createParser({
+const asyncConfig = require('async-config');
+const commandLineArgs = require('raptor-args').createParser({
         '--foo -f': 'boolean',
         '--bar -b': 'string'
     })
     .parse();
 
-require('async-config').load(
-    'config/config.json',
-    {
-        overrides: [commandLineArgs]
-    },
-    function(err, config) {
-        // Do something with the loaded config
-    });
+(async function () {
+  const config = await asyncConfig.load('config/config.json', {
+      overrides: [commandLineArgs]
+  });
+})();
 ```
 
 Therefore, if your app is invoked using `node myapp.js --foo -b hello`, then the final configuration would be:
@@ -260,28 +251,25 @@ It is common practice to load the configuration at startup and to delay listenin
 __config.js:__
 
 ```javascript
-var loadedConfig = null;
+const asyncConfig = require('async-config');
 
-function configureApp(config, callback) {
+let loadedConfig = null;
+
+function configureApp (config) {
     // Apply the configuration to the application...
-    
-    // Make sure to invoke the callback when the application is fully configured
-    callback();
+
+    // Make sure to invoke the promise when the application is fully configured
+    return Promise.resolve();
 }
 
-// Initiate the loading of the config
-var configHandle = require('async-config').load(
-    'config/config.json',
-    {
+exports.load = function () {
+    // Initiate the loading of the config
+    loadedConfig = await asyncConfig.load('config/config.json', {
         finalize: configureApp
-    },
-    function(err, config) {
-        if (err) {
-            throw err;
-        }
-        
-        loadedConfig = config;
     });
+
+    return loadedConfig;
+};
 
 /**
  * Synchronous API to return the loaded configuration:
@@ -293,52 +281,39 @@ exports.get = function() {
 
     return loadedConfig;
 }
-
-/**
- * Add a listener to be added for when the configuration is fully loaded.
- * If the configuration has already been fully loaded then the listener
- * will be invoked immediately.
- */
-exports.onConfigured = function(callback) {
-    configHandle.done(callback);
-}
 ```
 
 If you are building a server app, your `server.js` might look like the following:
 
 ```javascript
-var express = require('express');
-var config = require('./config');
+const express = require('express');
+const config = require('./config');
 
-// Asynchronously load environment-specific configuration data before starting the server
-config.onConfigured(function(err, config) {
-    if (err) {
-        throw err;
-    }
-    
-    var app = express();
-    var port = config.port;
+(async function () {
+  // Asynchronously load environment-specific configuration data before starting the server
+  const loadedConfig = await config.load();
 
-    // Configure the Express server app...
+  const app = express();
+  const port = loadedConfig.port;
 
-    app.listen(port, function() {
-        console.log('Listening on port', port);
-    });
-});
+  // Configure the Express server app...
+  app.listen(port, function() {
+      console.log('Listening on port', port);
+  });
+})();
 ```
 
 For a working sample server application that utilizes this module, please see the source code for the [raptor-samples/weather](https://github.com/raptorjs3/raptor-samples/tree/master/weather) app.
 
 # API
 
-## load(path[, options, callback]) : AsyncConfigHandle
+## load(path[, options]) : Promise
 
 The `load()` method is used to initiate the asynchronous loading of a configuration. The following method signatures are supported:
 
 ```javascript
-load(path) : AsyncConfigHandle
-load(path, options) : AsyncConfigHandle
-load(path, options, callback) : AsyncConfigHandle
+load(path) : Promise
+load(path, options) : Promise
 ```
 
 The path should be a file system path to a configuration file. If the path does not have an extension then the `.json` file extension is assumed. The input path will be used to build the search path.
@@ -352,25 +327,11 @@ The `options` argument supports the following properties:
     - `"env"` - ignore the `NODE_CONFIG` environment variable
     - `"env-file"` - ignore `path/{name}-{environment}.json`
     - `"local-file"` - ignore `path/{name}-local.json`
-- __finalize:__ An asynchronous `Function` with signature `function (config, callback)` that can be used to post-process the final configuration object and possibly return an entirely new configuration object.
+- __finalize:__ An asynchronous `Function` with signature `function (config)` that can be used to post-process the final configuration object and possibly return an entirely new configuration object.
 - __helpersEnabled:__ If set to `false` then no helpers will be added to the configuration object (currently the `get()` method is the only helper added to the final configuration object). The default value is `true`.
 - __overrides:__ An array of sources that will be appended to the load order. Each source can be either a `String` file path, an async `Function` or an `Object`.
 - __protocols:__ An object where each name is the protocol name and the value is a resolver `function` (see the [shortstop](https://github.com/krakenjs/shortstop) docs for more details).
 - __sources:__ A function that can be used to modify the default load order.
-
-## AsyncConfigHandle
-
-The `AsyncConfigHandle` object returned by a call to the `load()` method supports the following properties:
-
-### done(callback)
-
-Attaches a callback listener that will be invoked when the configuration has been fully loaded. If the configuration has already been fully loaded then the callback is invoked immediately. The signature of the callback function should be the following:
-
-```javascript
-function callback(error, config)
-```
-
-
 
 # Notes
 
